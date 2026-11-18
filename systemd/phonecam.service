@@ -1,0 +1,18 @@
+[Unit]
+Description=PhoneCam Wi-Fi receiver
+After=pipewire.service pipewire-pulse.service wireplumber.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/phonecam
+EnvironmentFile=%E/phonecam/receiver.env
+ExecStart=%h/.local/share/phonecam/venv/bin/python -m server.main
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+KillMode=mixed
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,66 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  background: #0c1517;
+  color: #ecf4f4;
+  --surface: #172529;
+  --border: #42565b;
+  --accent: #96efca;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+main { width: min(100% - 2rem, 34rem); margin: 2rem auto; }
+h1 { font-size: clamp(2rem, 8vw, 3rem); margin: 0; letter-spacing: -.04em; }
+header p { color: #b6c8cb; margin: .3rem 0 1.5rem; }
+
+.preview {
+  background: #060b0c;
+  border: 1px solid var(--border);
+  border-radius: .9rem;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; }
+#live {
+  position: absolute;
+  top: .65rem;
+  left: .65rem;
+  border-radius: 1rem;
+  padding: .3rem .8rem;
+  background: #9b2932;
+  color: white;
+  font-size: .9rem;
+}
+#status { min-height: 1.5em; overflow-wrap: anywhere; }
+form { display: grid; gap: .85rem; }
+fieldset { border: 1px solid var(--border); border-radius: .75rem; padding: .85rem; min-width: 0; }
+fieldset:disabled { opacity: .65; }
+legend { padding: 0 .35rem; }
+label { display: grid; gap: .35rem; font-size: .95rem; min-width: 0; }
+.address, .choices { display: grid; gap: .65rem; }
+.address { grid-template-columns: minmax(0, 1fr) minmax(5rem, .42fr); margin-bottom: .8rem; }
+.choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.check { display: flex; align-items: center; min-height: 2rem; }
+.check input { width: 1.2rem; height: 1.2rem; accent-color: var(--accent); }
+input:not([type="checkbox"]), select, button {
+  width: 100%;
+  min-height: 2.85rem;
+  border: 1px solid var(--border);
+  border-radius: .5rem;
+  padding: .55rem .7rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+button { cursor: pointer; font-weight: 650; background: var(--accent); color: #10221b; }
+button:disabled { opacity: .6; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#pairing, #disconnect { margin-top: .8rem; }
+#code { font-family: ui-monospace, monospace; letter-spacing: .08em; }
+#disconnect { background: transparent; color: inherit; }

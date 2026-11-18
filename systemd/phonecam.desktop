@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=PhoneCam
+Comment=Avvia il ricevitore PhoneCam nella sessione grafica
+Exec=/bin/sh -c "dbus-update-activation-environment --systemd DISPLAY XAUTHORITY WAYLAND_DISPLAY; exec systemctl --user start phonecam.service"
+Terminal=false
+X-GNOME-Autostart-enabled=true

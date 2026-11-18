@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src http:; media-src 'self' blob:">
+  <title>PhoneCam</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>PhoneCam</h1>
+      <p>Webcam e microfono via Wi-Fi</p>
+    </header>
+
+    <div class="preview">
+      <video id="preview" autoplay muted playsinline aria-label="Anteprima della fotocamera"></video>
+      <span id="live" hidden>In trasmissione</span>
+    </div>
+    <p id="status" role="status" aria-live="polite">Disconnesso</p>
+
+    <form id="connection">
+      <fieldset id="settings">
+        <legend>Ricevitore e fotocamera</legend>
+        <div class="address">
+          <label>IP locale del PC
+            <input id="address" type="text" inputmode="decimal" placeholder="192.168.1.20"
+                   required autocomplete="off" spellcheck="false">
+          </label>
+          <label>Porta
+            <input id="port" type="number" inputmode="numeric" min="1" max="65535" value="8765" required>
+          </label>
+        </div>
+        <div class="choices">
+          <label>Fotocamera
+            <select id="facing">
+              <option value="environment">Posteriore</option>
+              <option value="user">Anteriore</option>
+            </select>
+          </label>
+          <label>Risoluzione
+            <select id="resolution">
+              <option value="640x480">640 × 480</option>
+              <option value="1280x720">1280 × 720</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+      <label class="check"><input id="microphone" type="checkbox"> Microfono</label>
+      <button id="connect" type="submit">Connetti</button>
+    </form>
+
+    <form id="pairing" hidden>
+      <label>Codice mostrato sul PC
+        <input id="code" type="text" required maxlength="28" autocomplete="off"
+               autocapitalize="characters" spellcheck="false">
+      </label>
+      <button id="confirm" type="submit" disabled>Conferma e avvia</button>
+    </form>
+    <button id="disconnect" type="button" hidden>Disconnetti</button>
+  </main>
+</body>
+</html>
