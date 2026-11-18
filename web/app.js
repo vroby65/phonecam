@@ -44,7 +44,24 @@ async function post(current, path, body = {}, keepalive = false) {
     });
   } catch (error) {
     if (current.controller.signal.aborted || keepalive) throw error;
-    throw new Error("Ricevitore irraggiungibile. Verifica IP, porta, Wi-Fi e il permesso «Rete locale» in Chrome. Sul PC controlla anche l’origine configurata.");
+    current.checkNetwork = true;
+    const host = new URL(current.base).host;
+    if (error.name === "TimeoutError") {
+      throw new Error(`Nessuna risposta da ${host} entro 20 secondi.`);
+    }
+    if (typeof AbortSignal.any !== "function" || typeof AbortSignal.timeout !== "function") {
+      throw new Error("Aggiorna Chrome per usare il collegamento alla rete locale.");
+    }
+    let permission;
+    try {
+      permission = (await navigator.permissions.query({ name: "local-network" })).state;
+    } catch {
+      // Alcune versioni di Chrome non espongono questo permesso alla pagina.
+    }
+    if (permission === "denied") {
+      throw new Error(`Chrome segnala accesso alla rete locale negato per ${location.hostname}. Apri le autorizzazioni del sito e consenti la rete locale.`);
+    }
+    throw new Error(`Chrome non ha ottenuto una risposta leggibile da ${host}. Prova il collegamento diretto qui sotto.`);
   }
   const result = await response.json();
   if (!response.ok) {
@@ -92,6 +109,14 @@ function stop(current, messageText = "Disconnesso") {
   ui.code.value = "";
   ui.live.hidden = true;
   show(messageText);
+  if (current.checkNetwork) {
+    const link = document.createElement("a");
+    link.href = current.base + "/health";
+    link.textContent = "Verifica il ricevitore sul Wi-Fi";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    ui.status.append(document.createElement("br"), link);
+  }
 }
 
 async function checkApproval(current) {

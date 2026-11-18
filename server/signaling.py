@@ -99,6 +99,8 @@ class Receiver:
         if request.host != f"{local[0]}:{local[1]}" and local != (request.host, 80):
             return error(403, "Usa l’indirizzo IPv4 del ricevitore come destinazione.")
         origin = request.headers.get("Origin")
+        if origin is None and request.method == "GET" and request.path == "/health":
+            return await handler(request)
         if origin not in self.origins:
             return error(403, "Origine della pagina non autorizzata sul ricevitore.")
         if request.method == "OPTIONS" and request.match_info.http_exception is None:
@@ -122,6 +124,13 @@ class Receiver:
             "X-Content-Type-Options": "nosniff",
         })
         return response
+
+    async def health(self, request):
+        LOG.info("Verifica diretta del ricevitore da %s", request.remote)
+        return web.Response(
+            text="Ricevitore PhoneCam raggiungibile. Torna alla pagina PhoneCam per collegarti.",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     async def pair(self, request):
         if request.content_type != "application/json":
@@ -325,6 +334,7 @@ class Receiver:
     def app(self):
         app = web.Application(middlewares=[self.lan_only], client_max_size=65536)
         app.cleanup_ctx.append(self.lifetime)
+        app.router.add_get("/health", self.health, allow_head=False)
         app.router.add_post("/pair", self.pair)
         app.router.add_post("/session/{id}/{action:status|confirm|offer|close}", self.action)
         app.router.add_route("OPTIONS", "/pair", self.pair)

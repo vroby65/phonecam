@@ -37,6 +37,7 @@ video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; 
   color: white;
   font-size: .9rem;
 }
+#status a { color: var(--accent); }
 #status { min-height: 1.5em; overflow-wrap: anywhere; }
 form { display: grid; gap: .85rem; }
 fieldset { border: 1px solid var(--border); border-radius: .75rem; padding: .85rem; min-width: 0; }

@@ -174,7 +174,7 @@ anche dal buffer WebRTC e dalla rete.
 
 | Sintomo | Controllo |
 | --- | --- |
-| Ricevitore irraggiungibile | Controlla IP, porta, servizio e permesso **Rete locale** del sito in Chrome. Evita la rete ospiti e l'isolamento Wi-Fi. Controlla nei log che l'origine sia quella installata. |
+| Ricevitore irraggiungibile | Tocca **Verifica il ricevitore sul Wi-Fi**. Se compare «Ricevitore PhoneCam raggiungibile», la porta HTTP è accessibile dal telefono. Controlla il permesso **Rete locale** del sito in Chrome. Evita la rete ospiti e l'isolamento Wi-Fi. Controlla nei log che l'origine sia quella installata. |
 | Autorizzazione assente | Avvia il servizio dalla sessione grafica, verifica `zenity` e le variabili `DISPLAY` o `WAYLAND_DISPLAY`. La richiesta scade dopo 90 secondi. Se annulli sul telefono prima di associare il codice, chiudi anche la finestra sul PC o attendi la scadenza. |
 | WebRTC non si collega | Consenti la porta TCP configurata e il traffico UDP locale per ICE sul firewall già in uso. Il ricevitore usa porte UDP effimere e candidati host. Chrome può usare mDNS per annunciare un candidato. |
 | Webcam assente | Avvia la trasmissione e riapri l'elenco periferiche. Controlla `modinfo v4l2loopback`, gli header del kernel, DKMS e le impostazioni Secure Boot. Verifica i permessi del dispositivo e le autorizzazioni dell'app se è in una sandbox. |

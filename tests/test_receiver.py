@@ -110,6 +110,17 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.mic.closed)
         self.assertIsNone(self.receiver.session)
 
+    async def test_direct_health_check_is_lan_only_and_does_not_pair(self):
+        response = await self.client.get("/health")
+        self.assertEqual(response.status, 200)
+        self.assertIn("Ricevitore PhoneCam raggiungibile", await response.text())
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn("Access-Control-Allow-Origin", response.headers)
+        for headers in ({"Host": "other.example"}, {"Origin": "https://other.example"}):
+            self.assertEqual((await self.client.get("/health", headers=headers)).status, 403)
+        self.assertEqual((await self.client.post("/pair", json={})).status, 403)
+        self.assertIsNone(self.receiver.session)
+
     async def test_cors_rejects_unconfigured_origin_and_dns_rebinding(self):
         response = await self.client.options("/pair", headers={
             **HEADERS, "Access-Control-Request-Method": "POST",
