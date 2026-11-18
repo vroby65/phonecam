@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import asyncio
-import base64
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -14,6 +14,9 @@ from aiohttp import web
 from aiortc import RTCBundlePolicy, RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from aiortc.mediastreams import MediaStreamError
 from aiortc.sdp import SessionDescription, candidate_from_sdp
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from .audio import AudioOutput, VirtualMicrophone
 from .authorization import PAIR_SECONDS, request_approval
@@ -34,9 +37,15 @@ def local_address(value):
     return address.is_loopback or any(address in net for net in PRIVATE_NETWORKS)
 
 
-def proof(code, session_id, action, payload=""):
+def proof(key, session_id, action, payload=""):
     message = f"{session_id}\n{action}\n{payload}".encode()
-    return hmac.digest(code.encode("ascii"), message, "sha256").hex()
+    return hmac.digest(key, message, "sha256").hex()
+
+
+def public_hex(key):
+    return key.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint,
+    ).hex()
 
 
 def filtered_sdp(sdp, address, allow_mdns=False):
@@ -60,10 +69,12 @@ class Session:
     address: str
     origin: str
     ident: str
-    code: str
-    approval: asyncio.Task
+    commitment: str
+    private_key: ec.EllipticCurvePrivateKey | None
     deadline: float
-    stage: str = "pairing"
+    key: bytes | None = None
+    approval: asyncio.Task | None = None
+    stage: str = "exchange"
     peer: RTCPeerConnection | None = None
     outputs: dict = field(default_factory=dict)
     writers: list = field(default_factory=list)
@@ -135,8 +146,13 @@ class Receiver:
     async def pair(self, request):
         if request.content_type != "application/json":
             return error(415, "Usa una richiesta JSON.")
-        if await request.read() != b"{}":
-            return error(400, "Richiesta di associazione non valida.")
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeError):
+            return error(400, "Richiesta JSON non valida.")
+        commitment = body.get("commitment") if isinstance(body, dict) else None
+        if not isinstance(commitment, str) or not re.fullmatch(r"[0-9a-f]{64}", commitment):
+            return error(400, "Richiesta di associazione non valida. Ricarica la pagina PhoneCam.")
         if self.stopping:
             return error(503, "Il ricevitore si sta arrestando.")
         current = self.session
@@ -145,19 +161,42 @@ class Receiver:
                 await asyncio.shield(self.schedule_close(current))
             if self.session is not None or self.stopping:
                 return error(409, "Il ricevitore ha già una richiesta o una connessione attiva.")
-        address, origin = request.remote, request.headers["Origin"]
-        code = base64.b32encode(secrets.token_bytes(13)).decode()[:20]
         ident = secrets.token_urlsafe(18)
-        approval = asyncio.create_task(self.authorizer(address, origin, code))
-        self.session = Session(address, origin, ident, code, approval,
-                               time.monotonic() + PAIR_SECONDS)
-        LOG.info("Richiesta di autorizzazione da %s", address)
-        return web.json_response({"id": ident})
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        self.session = Session(request.remote, request.headers["Origin"], ident,
+                               commitment, private_key, time.monotonic() + 15)
+        return web.json_response({"id": ident, "publicKey": public_hex(private_key)})
+
+    def exchange(self, session, body):
+        private_key = session.private_key
+        if session.stage != "exchange" or private_key is None:
+            return error(409, "Lo scambio delle chiavi si è già concluso.")
+        public_key, nonce = body.get("publicKey"), body.get("nonce")
+        if (not isinstance(public_key, str) or not re.fullmatch(r"04[0-9a-f]{128}", public_key)
+                or not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{32}", nonce)):
+            return error(400, "Chiave di associazione non valida.")
+        commitment = hashlib.sha256(f"{public_key}\n{nonce}".encode()).hexdigest()
+        if not hmac.compare_digest(session.commitment, commitment):
+            return error(403, "La chiave non coincide con la richiesta iniziale.")
+        try:
+            peer = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), bytes.fromhex(public_key))
+            secret = private_key.exchange(ec.ECDH(), peer)
+        except ValueError:
+            return error(400, "Chiave di associazione non valida.")
+        info = f"phonecam-pair-v1\n{session.ident}\n{public_key}\n{public_hex(private_key)}\n{nonce}".encode()
+        session.key = HKDF(hashes.SHA256(), 32, salt=None, info=info).derive(secret)
+        session.private_key = None
+        code = int(proof(session.key, session.ident, "pairing-code")[:8], 16) % 10000
+        session.approval = asyncio.create_task(self.authorizer(session.address, session.origin, f"{code:04d}"))
+        session.stage = "pairing"
+        session.deadline = time.monotonic() + PAIR_SECONDS
+        LOG.info("Richiesta di autorizzazione da %s", session.address)
+        return web.json_response({})
 
     @staticmethod
     def rejected(session):
         approval = session.approval
-        return (session.stage == "pairing" and approval.done()
+        return (session.stage == "pairing" and approval is not None and approval.done()
                 and (approval.cancelled() or approval.exception() is not None or not approval.result()))
 
     async def action(self, request):
@@ -177,6 +216,10 @@ class Receiver:
         async with session.lock:
             if session.closing is not None or session.deadline <= time.monotonic():
                 return error(410, "Sessione scaduta o chiusa.")
+            if action == "exchange":
+                return self.exchange(session, body)
+            if session.key is None or session.approval is None:
+                return error(409, "Completa prima lo scambio delle chiavi.")
             if self.rejected(session):
                 self.schedule_close(session)
                 LOG.info("Collegamento rifiutato da desktop per %s", session.address)
@@ -189,11 +232,11 @@ class Receiver:
                     or not isinstance(payload, str)):
                 return error(400, "Firma o contenuto della richiesta non validi.")
             try:
-                signed = proof(session.code, session.ident, action, payload)
+                signed = proof(session.key, session.ident, action, payload)
             except UnicodeError:
                 return error(400, "Contenuto della richiesta non valido.")
             if not hmac.compare_digest(signature, signed):
-                return error(403, "Codice di associazione errato.")
+                return error(403, "Firma di associazione non valida.")
             if action == "close":
                 self.schedule_close(session)
                 return web.json_response({})
@@ -202,7 +245,7 @@ class Receiver:
                     return error(425, "Autorizza prima la richiesta sul PC.")
                 session.stage = "confirmed"
                 session.deadline = time.monotonic() + 60
-                return web.json_response({"proof": proof(session.code, session.ident, "confirmed")})
+                return web.json_response({"proof": proof(session.key, session.ident, "confirmed")})
             if action == "offer" and session.stage == "confirmed":
                 local_ip = request.transport.get_extra_info("sockname")[0]
                 return await self.offer(session, local_ip, payload)
@@ -268,7 +311,7 @@ class Receiver:
             LOG.exception("Negoziazione WebRTC fallita")
             return error(400, "Negoziazione WebRTC fallita.")
         return web.json_response({
-            "sdp": answer, "proof": proof(session.code, session.ident, "answer", answer),
+            "sdp": answer, "proof": proof(session.key, session.ident, "answer", answer),
         })
 
     async def write_track(self, session, track, output):
@@ -288,8 +331,9 @@ class Receiver:
 
     async def close(self, session):
         async with session.lock:
-            session.approval.cancel()
-            await asyncio.gather(session.approval, return_exceptions=True)
+            if session.approval is not None:
+                session.approval.cancel()
+                await asyncio.gather(session.approval, return_exceptions=True)
             for writer in session.writers:
                 writer.cancel()
             await asyncio.gather(*session.writers, return_exceptions=True)
@@ -336,7 +380,7 @@ class Receiver:
         app.cleanup_ctx.append(self.lifetime)
         app.router.add_get("/health", self.health, allow_head=False)
         app.router.add_post("/pair", self.pair)
-        app.router.add_post("/session/{id}/{action:status|confirm|offer|close}", self.action)
+        app.router.add_post("/session/{id}/{action:exchange|status|confirm|offer|close}", self.action)
         app.router.add_route("OPTIONS", "/pair", self.pair)
-        app.router.add_route("OPTIONS", "/session/{id}/{action:status|confirm|offer|close}", self.action)
+        app.router.add_route("OPTIONS", "/session/{id}/{action:exchange|status|confirm|offer|close}", self.action)
         return app

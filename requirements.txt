@@ -1,2 +1,3 @@
 aiohttp>=3.13,<4
 aiortc>=1.14,<2
+cryptography>=44

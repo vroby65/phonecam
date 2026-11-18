@@ -25,8 +25,10 @@ progetto.
 
 - La pagina acquisisce i media in un contesto sicuro, dopo approvazione e
   conferma autenticata. Il microfono richiede un consenso esplicito.
-- Il codice casuale di associazione rimane sul desktop e nel browser. Offerta,
-  risposta e chiusura sono legate alla sessione con HMAC. Un solo slot è attivo.
+- Il codice di quattro cifre serve al confronto visivo dopo lo scambio ECDH.
+  I messaggi autenticati usano HMAC con la chiave di sessione derivata via
+  HKDF. Mantieni l'impegno del telefono prima dello scambio delle chiavi.
+  Un solo slot è attivo.
 - Mantieni la verifica dell'origine e dell'IPv4 e conserva la verifica del
   fingerprint DTLS attraverso l'autenticazione di entrambe le descrizioni SDP.
 - Mantieni ICE senza server pubblici e i processi media con argomenti fissi e

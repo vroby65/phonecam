@@ -9,12 +9,11 @@ PAIR_SECONDS = 90
 
 
 async def request_approval(address, origin, code):
-    grouped_code = " ".join(code[i:i + 4] for i in range(0, len(code), 4))
     message = (
         f"Collegamento richiesto da {html.escape(address)}\n"
         f"Pagina: {html.escape(origin)}\n\n"
-        f"Codice da inserire sul telefono: {grouped_code}\n\n"
-        "Autorizza solo se hai appena premuto Connetti sul tuo telefono."
+        f"Codice di verifica: {code}\n\n"
+        "Autorizza solo se sul telefono vedi lo stesso codice."
     )
     try:
         process = await asyncio.create_subprocess_exec(

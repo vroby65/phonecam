@@ -31,12 +31,16 @@ il permesso del sito. Un browser privo dell'eccezione LNA richiederebbe un
 endpoint locale HTTPS attendibile per lo stesso signaling automatico.
 [Specifica Media Capture and Streams](https://w3c.github.io/mediacapture-main/#dom-mediadevices-getusermedia)
 
-Sul PC, Zenity mostra la richiesta e un codice casuale di 20 caratteri.
-Il codice rimane sul PC e nel browser. La conferma, l'offerta, la risposta
-e la chiusura usano HMAC-SHA-256 su quella sessione. L'autorizzazione richiede
-anche la corrispondenza tra l'IP sorgente, l'origine configurata e la sessione.
-Il codice scade con la richiesta o il collegamento. È permesso un solo
-collegamento alla volta.
+Il telefono e la finestra Zenity mostrano un codice di verifica di quattro
+cifre. Confrontali prima di autorizzare. Il browser e il ricevitore usano
+ECDH su P-256 e HKDF-SHA-256 per derivare la chiave di sessione. Il telefono
+si impegna sulla propria chiave pubblica prima di ricevere quella del PC.
+Il codice serve al confronto visivo. In caso di intercettazione attiva,
+la probabilità che due codici coincidano è circa una su diecimila per tentativo.
+La conferma, l'offerta, la risposta e la chiusura usano HMAC-SHA-256 con la
+chiave di sessione. L'autorizzazione richiede anche la corrispondenza
+dell'IP sorgente e dell'origine configurata. È permesso un solo collegamento
+alla volta.
 
 Il signaling HTTP è leggibile da chi intercetta la LAN. Le descrizioni sono
 firmate, inclusi i fingerprint DTLS da cui dipende l'autenticazione del
@@ -132,10 +136,9 @@ python3 -m venv .venv
    fotocamera e risoluzione. Se vuoi anche l'audio, spunta **Microfono**.
 3. Premi **Connetti** e consenti l'accesso alla **Rete locale** in Chrome
    quando richiesto.
-4. Nella finestra sul PC, verifica che la richiesta coincida con la tua.
-   Trascrivi il codice sul telefono e premi **Autorizza** sul PC. Sul telefono
-   premi **Conferma e avvia**, quindi consenti la fotocamera ed eventualmente
-   il microfono.
+4. Confronta le quattro cifre sul telefono con quelle nella finestra sul PC.
+   Solo se coincidono, premi **Autorizza** sul PC. Poi tocca **Continua** sul
+   telefono e consenti la fotocamera e, se lo hai selezionato, il microfono.
 5. Quando compare **In trasmissione**, seleziona **PhoneCam Camera** nella
    tua applicazione Linux e, se serve, **PhoneCam Microphone**. Con
    `exclusive_caps=1` Chrome e altri programmi vedono la webcam dopo
@@ -175,7 +178,7 @@ anche dal buffer WebRTC e dalla rete.
 | Sintomo | Controllo |
 | --- | --- |
 | Ricevitore irraggiungibile | Tocca **Verifica il ricevitore sul Wi-Fi**. Se compare «Ricevitore PhoneCam raggiungibile», la porta HTTP è accessibile dal telefono. Controlla il permesso **Rete locale** del sito in Chrome. Evita la rete ospiti e l'isolamento Wi-Fi. Controlla nei log che l'origine sia quella installata. |
-| Autorizzazione assente | Avvia il servizio dalla sessione grafica, verifica `zenity` e le variabili `DISPLAY` o `WAYLAND_DISPLAY`. La richiesta scade dopo 90 secondi. Se annulli sul telefono prima di associare il codice, chiudi anche la finestra sul PC o attendi la scadenza. |
+| Autorizzazione assente | Avvia il servizio dalla sessione grafica, verifica `zenity` e le variabili `DISPLAY` o `WAYLAND_DISPLAY`. La richiesta scade dopo 90 secondi. Se la finestra resta aperta dopo un'interruzione, premi Rifiuta sul PC o attendi la scadenza. |
 | WebRTC non si collega | Consenti la porta TCP configurata e il traffico UDP locale per ICE sul firewall già in uso. Il ricevitore usa porte UDP effimere e candidati host. Chrome può usare mDNS per annunciare un candidato. |
 | Webcam assente | Avvia la trasmissione e riapri l'elenco periferiche. Controlla `modinfo v4l2loopback`, gli header del kernel, DKMS e le impostazioni Secure Boot. Verifica i permessi del dispositivo e le autorizzazioni dell'app se è in una sandbox. |
 | Webcam occupata o immagine assente dopo riconnessione | Chiudi o deseleziona la webcam nell'app Linux, poi ricomincia. Un'app che tiene aperto il dispositivo può impedire il cambio di formato. |

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import asyncio
+import hashlib
+import secrets
 import json
 import tempfile
 import time
@@ -11,6 +13,10 @@ from aiohttp import ClientSession, TCPConnector
 from aiohttp.test_utils import TestClient, TestServer
 from aiortc import (AudioStreamTrack, RTCBundlePolicy, RTCConfiguration, RTCPeerConnection,
                     RTCSessionDescription, VideoStreamTrack)
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from server.main import page_origin
 from server.signaling import Receiver, filtered_sdp, local_address, proof
@@ -72,18 +78,44 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(client.close)
         return client
 
+    async def begin_pair(self, client, public_key, nonce):
+        commitment = hashlib.sha256(f"{public_key}\n{nonce}".encode()).hexdigest()
+        response = await client.post("/pair", json={"commitment": commitment}, headers=HEADERS)
+        self.assertEqual(response.status, 200, await response.text())
+        return await response.json()
+
+    @staticmethod
+    def public_hex(key):
+        return key.public_key().public_bytes(
+            serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint,
+        ).hex()
+
     async def pair(self, client=None):
         client = client or self.client
-        response = await client.post("/pair", json={}, headers=HEADERS)
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        public_key = self.public_hex(private_key)
+        nonce = secrets.token_hex(16)
+        started = await self.begin_pair(client, public_key, nonce)
+        ident, server_key = started["id"], started["publicKey"]
+        receiver_key = ec.EllipticCurvePublicKey.from_encoded_point(
+            ec.SECP256R1(), bytes.fromhex(server_key),
+        )
+        secret = private_key.exchange(ec.ECDH(), receiver_key)
+        info = f"phonecam-pair-v1\n{ident}\n{public_key}\n{server_key}\n{nonce}".encode()
+        self.key = HKDF(hashes.SHA256(), 32, salt=None, info=info).derive(secret)
+        response = await client.post(
+            f"/session/{ident}/exchange", json={"publicKey": public_key, "nonce": nonce},
+            headers=HEADERS,
+        )
         self.assertEqual(response.status, 200, await response.text())
-        ident = (await response.json())["id"]
         await asyncio.sleep(0)
-        self.assertIsNotNone(self.code)
+        expected = int(proof(self.key, ident, "pairing-code")[:8], 16) % 10000
+        self.assertEqual(self.code, f"{expected:04d}")
         return ident
 
-    async def action(self, ident, action, *, client=None, payload="", code=None, origin=ORIGIN):
+    async def action(self, ident, action, *, client=None, payload="", key=None, origin=ORIGIN):
         client = client or self.client
-        signature = proof(code or self.code, ident, action, payload)
+        signature = proof(key or self.key, ident, action, payload)
         return await client.post(
             f"/session/{ident}/{action}", headers={"Origin": origin},
             json={"proof": signature, "payload": payload},
@@ -94,7 +126,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         response = await self.action(ident, "confirm", client=client)
         self.assertEqual(response.status, 200)
-        self.assertEqual((await response.json())["proof"], proof(self.code, ident, "confirmed"))
+        self.assertEqual((await response.json())["proof"], proof(self.key, ident, "confirmed"))
 
     async def wait_closed(self):
         async with asyncio.timeout(5):
@@ -139,12 +171,12 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Access-Control-Allow-Origin", result.headers)
         self.assertIsNone(self.receiver.session)
 
-    async def test_approval_requires_code_and_matching_origin(self):
+    async def test_approval_requires_session_key_and_matching_origin(self):
         ident = await self.pair()
         self.assertEqual((await self.action(ident, "confirm")).status, 425)
-        self.assertEqual((await self.client.post("/pair", json={}, headers=HEADERS)).status, 409)
+        self.assertEqual((await self.client.post("/pair", json={"commitment": "a" * 64}, headers=HEADERS)).status, 409)
         self.assertEqual((await self.action(ident, "confirm", origin=OTHER_ORIGIN)).status, 404)
-        self.assertEqual((await self.action(ident, "confirm", code="B" * 20)).status, 403)
+        self.assertEqual((await self.action(ident, "confirm", key=self.code.encode())).status, 403)
         await self.confirm(ident)
         self.assertEqual((await self.action(ident, "confirm")).status, 409)
         self.assertEqual((await self.action(ident, "offer", payload="{}")).status, 400)
@@ -152,13 +184,34 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         await self.wait_closed()
         self.assertEqual((await self.action(ident, "confirm")).status, 404)
 
+    async def test_pairing_binds_the_public_key_before_showing_the_code(self):
+        public_key = self.public_hex(ec.generate_private_key(ec.SECP256R1()))
+        other_key = self.public_hex(ec.generate_private_key(ec.SECP256R1()))
+        nonce = secrets.token_hex(16)
+        started = await self.begin_pair(self.client, public_key, nonce)
+        path = f"/session/{started['id']}/exchange"
+        self.assertIsNone(self.code)
+        reply = await self.client.post(
+            path, json={"publicKey": other_key, "nonce": nonce}, headers=HEADERS,
+        )
+        self.assertEqual(reply.status, 403)
+        self.assertIsNone(self.code)
+        reply = await self.client.post(
+            path, json={"publicKey": public_key, "nonce": nonce}, headers=HEADERS,
+        )
+        self.assertEqual(reply.status, 200)
+        reply = await self.client.post(
+            path, json={"publicKey": public_key, "nonce": nonce}, headers=HEADERS,
+        )
+        self.assertEqual(reply.status, 409)
+
     async def test_confirmation_cannot_be_reused_from_another_address(self):
         ident = await self.pair()
         self.approval.set_result(True)
         async with ClientSession(connector=TCPConnector(local_addr=("127.0.0.2", 0))) as other:
             response = await other.post(
                 self.client.make_url(f"/session/{ident}/confirm"), headers=HEADERS,
-                json={"proof": proof(self.code, ident, "confirm")},
+                json={"proof": proof(self.key, ident, "confirm")},
             )
             self.assertEqual(response.status, 404)
         response = await self.action(ident, "confirm")
@@ -245,7 +298,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         response = await self.action(ident, "offer", client=client, payload=payload)
         self.assertEqual(response.status, 200, await response.text())
         answer = await response.json()
-        self.assertEqual(answer["proof"], proof(self.code, ident, "answer", answer["sdp"]))
+        self.assertEqual(answer["proof"], proof(self.key, ident, "answer", answer["sdp"]))
         await peer.setRemoteDescription(RTCSessionDescription(sdp=answer["sdp"], type="answer"))
         async with asyncio.timeout(15):
             await asyncio.gather(self.video.received.wait(), self.audio.received.wait())

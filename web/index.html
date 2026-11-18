@@ -7,8 +7,8 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src http:; media-src 'self' blob:">
   <title>PhoneCam</title>
-  <link rel="stylesheet" href="style.css">
-  <script defer src="app.js?rev=2"></script>
+  <link rel="stylesheet" href="style.css?rev=3">
+  <script defer src="app.js?rev=3"></script>
 </head>
 <body>
   <main>
@@ -55,11 +55,10 @@
     </form>
 
     <form id="pairing" hidden>
-      <label>Codice mostrato sul PC
-        <input id="code" type="text" required maxlength="28" autocomplete="off"
-               autocapitalize="characters" spellcheck="false">
+      <label>Codice di verifica
+        <output id="code" aria-live="polite"></output>
       </label>
-      <button id="confirm" type="submit" disabled>Conferma e avvia</button>
+      <button id="confirm" type="submit" disabled>Continua</button>
     </form>
     <button id="disconnect" type="button" hidden>Disconnetti</button>
   </main>

@@ -72,20 +72,53 @@ async function post(current, path, body = {}, keepalive = false) {
   return result;
 }
 
+function hex(bytes) {
+  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function unhex(value) {
+  return Uint8Array.from(value.match(/../g), byte => parseInt(byte, 16));
+}
+
+async function exchangeKeys(current) {
+  const curve = { name: "ECDH", namedCurve: "P-256" };
+  const keys = await crypto.subtle.generateKey(curve, false, ["deriveBits"]);
+  const publicKey = hex(await crypto.subtle.exportKey("raw", keys.publicKey));
+  const nonce = hex(crypto.getRandomValues(new Uint8Array(16)));
+  // Impegna la chiave del telefono prima di ricevere quella del PC.
+  const commitment = hex(await crypto.subtle.digest("SHA-256", utf8.encode(`${publicKey}\n${nonce}`)));
+  const started = await post(current, "/pair", { commitment });
+  if (typeof started.id !== "string" || !/^[\w-]{24}$/.test(started.id)
+      || typeof started.publicKey !== "string" || !/^04[0-9a-f]{128}$/.test(started.publicKey)) {
+    throw new Error("Risposta del ricevitore non valida.");
+  }
+  current.id = started.id;
+  const peerKey = await crypto.subtle.importKey("raw", unhex(started.publicKey), curve, false, []);
+  const secret = await crypto.subtle.deriveBits({ name: "ECDH", public: peerKey }, keys.privateKey, 256);
+  const input = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveKey"]);
+  const info = utf8.encode(`phonecam-pair-v1\n${current.id}\n${publicKey}\n${started.publicKey}\n${nonce}`);
+  current.key = await crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info }, input,
+    { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign", "verify"],
+  );
+  await post(current, sessionPath(current, "exchange"), { publicKey, nonce });
+  current.closeBody = await signed(current, "close");
+  const code = await signed(current, "pairing-code");
+  return String(parseInt(code.proof.slice(0, 8), 16) % 10000).padStart(4, "0");
+}
+
 function message(current, action, payload) {
   return utf8.encode(`${current.id}\n${action}\n${payload}`);
 }
 
 async function signed(current, action, payload = "") {
   const result = await crypto.subtle.sign("HMAC", current.key, message(current, action, payload));
-  const proof = Array.from(new Uint8Array(result), byte => byte.toString(16).padStart(2, "0")).join("");
-  return { proof, payload };
+  return { proof: hex(result), payload };
 }
 
 async function verify(current, action, payload, proof) {
   if (typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof)) return false;
-  const bytes = Uint8Array.from(proof.match(/../g), byte => parseInt(byte, 16));
-  return crypto.subtle.verify("HMAC", current.key, bytes, message(current, action, payload));
+  return crypto.subtle.verify("HMAC", current.key, unhex(proof), message(current, action, payload));
 }
 
 function stop(current, messageText = "Disconnesso") {
@@ -125,7 +158,7 @@ async function checkApproval(current) {
     if (session !== current || current.confirming) return;
     if (status.approved) {
       ui.confirm.disabled = false;
-      show("Autorizzato sul PC. Inserisci il codice e conferma.");
+      show("Autorizzato sul PC. Tocca Continua se i codici coincidono.");
       return;
     }
     current.poll = setTimeout(() => checkApproval(current), 1500);
@@ -159,14 +192,14 @@ ui.connection.addEventListener("submit", async event => {
   ui.disconnect.hidden = false;
   show("Contatto il ricevitore. Se Chrome lo chiede, consenti l’accesso alla rete locale.");
   try {
-    const { id } = await post(current, "/pair");
-    if (session !== current) return;
-    if (typeof id !== "string" || !/^[\w-]{24}$/.test(id)) {
-      throw new Error("Risposta del ricevitore non valida.");
+    const code = await exchangeKeys(current);
+    if (session !== current) {
+      post(current, sessionPath(current, "close"), current.closeBody, true).catch(() => {});
+      return;
     }
-    current.id = id;
+    ui.code.value = code;
     ui.pairing.hidden = false;
-    show("Leggi il codice nella finestra sul PC e premi Autorizza.");
+    show("Confronta il codice con quello sul PC. Autorizza solo se coincidono.");
     await checkApproval(current);
   } catch (error) {
     stop(current, error.message);
@@ -257,37 +290,19 @@ ui.pairing.addEventListener("submit", async event => {
   event.preventDefault();
   const current = session;
   if (!current || current.confirming || ui.confirm.disabled) return;
-  const code = ui.code.value.replace(/[\s-]/g, "").toUpperCase();
-  if (!/^[A-Z2-7]{20}$/.test(code)) {
-    show("Il codice deve contenere i 20 caratteri mostrati sul PC.");
-    return;
-  }
   current.confirming = true;
   ui.confirm.disabled = true;
   try {
-    current.key = await crypto.subtle.importKey(
-      "raw", utf8.encode(code), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"],
-    );
     const confirmation = await post(current, sessionPath(current, "confirm"), await signed(current, "confirm"));
     if (!await verify(current, "confirmed", "", confirmation.proof)) {
       throw new Error("Identità del ricevitore non verificata.");
     }
-    current.closeBody = await signed(current, "close");
-    if (session !== current) {
-      post(current, sessionPath(current, "close"), current.closeBody, true).catch(() => {});
-      return;
-    }
+    if (session !== current) return;
     ui.code.value = "";
     ui.pairing.hidden = true;
     await startMedia(current);
   } catch (error) {
     if (session !== current) return;
-    if (error.status === 403 && error.message === "Codice di associazione errato.") {
-      current.confirming = false;
-      ui.confirm.disabled = false;
-      show(error.message);
-      return;
-    }
     const errors = {
       NotAllowedError: "Permesso per fotocamera o microfono negato. Controlla le impostazioni di Chrome.",
       NotFoundError: "Fotocamera o microfono selezionato assente.",
